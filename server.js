@@ -1,5 +1,9 @@
 require('dotenv').config()
+
 const FormData = require("form-data");
+const { Blob } = require('buffer');
+const { dataUriToBuffer } = require('data-uri-to-buffer');
+const { Image } = require("canvas");
 
 const path = require('path');
 const express = require('express');
@@ -17,50 +21,60 @@ app.use(express.static(htmlPath));
 const apiKey = process.env.OPENAI_API_KEY;
 
 app.post("/generateImage", async (req, res) => {
-    const userSketch = req.body.sketch; // Get the user's sketch from the request
-    // Use the OpenAI API to generate an image based on the sketch
-    const generatedImage = await generateImage(userSketch);
-    res.json({ image: generatedImage });
+    const imageDataUrl = req.body.imageDataUrl; 
+    const imageDescribed = await describeImage(imageDataUrl);
+    res.json({ imageDescription: imageDescribed });
 });
 
 
-// Function to convert canvas drawing to PNG image
-function canvasToPNG(canvas) {
-    // Capture the canvas drawing as a data URL
-    const dataURL = canvas.toDataURL("image/png");
-
-    // Convert the data URL to a Blob
-    const blob = dataURLtoBlob(dataURL);
-
-    // Create a new URL for the Blob object
-    const blobURL = URL.createObjectURL(blob);
-
-    return blobURL;
-}
-
 // Function to convert data URL to Blob
-function dataURLtoBlob(dataURL) {
-    const parts = dataURL.split(';base64,');
-    const contentType = parts[0].split(':')[1];
-    const raw = window.atob(parts[1]);
-    const rawLength = raw.length;
-    const uInt8Array = new Uint8Array(rawLength);
-
-    for (let i = 0; i < rawLength; ++i) {
-        uInt8Array[i] = raw.charCodeAt(i);
+function dataUriToBlob(dataUri) {
+    try {
+        const buffer = dataUriToBuffer(dataUri);
+        const blob = new Blob([buffer]);
+        return blob;
+    } catch (error) {
+        console.error("Error converting Data URI to Blob:", error);
+        return null;
     }
-
-    return new Blob([uInt8Array], { type: contentType });
 }
 
 
-async function generateImage(userSketch) {
-    const textPrompt = "Create an image in the style of Picasso with the following sketch";
+async function describeImage(imageDataUrl) {
+  try {
+    const formData = new FormData();
+    //const image = dataUriToBlob(imageDataUrl);
+    let image = new Image();
+    await new Promise(r => image.onload=r, image.src=imageDataUrl);
+    formData.append("file", image, { filename: "image.png" });
 
+    const response = await axios.post('https://api.openai.com/v1/image-analysis', formData, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        ...formData.getHeaders(),
+      },
+    });
+
+    if (response.data && response.data.description) {
+        console.log(response.data);
+        return response.data.description;
+    } else {
+        throw new Error('No description found in the response.');
+    }
+  } catch (error) {
+    console.error('Error describing image:', error);
+    throw error;
+  }
+}
+
+
+async function generateImage(imageDataUrl) {
+    const prompt = "Create an image in the style of Picasso with the following sketch";
+    const image = dataUriToBlob(imageDataUrl);
     try {
         const formData = new FormData();
-        formData.append("prompt", textPrompt);
-        formData.append("image", userSketch); // Assuming userSketch is a file or Blob object
+        formData.append("prompt", prompt);
+        formData.append("image", image);
         
         const config = {
             headers: {
